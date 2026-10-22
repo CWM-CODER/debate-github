@@ -1,0 +1,30 @@
+fastapi
+uvicorn[standard]
+websockets
+pydantic
+python-multipart
+
+# NLP pipelines
+sentence-transformers
+transformers
+torch
+scipy
+scikit-learn
+numpy
+faiss-cpu
+
+# Claim segmentation + lexical
+spacy
+rapidfuzz
+
+# Internet RAG
+httpx
+beautifulsoup4
+lxml
+duckduckgo-search
+
+# Storage
+aiosqlite
+
+# Utilities
+python-dotenv
