@@ -140,8 +140,8 @@ app.add_middleware(
 
 @app.post("/api/match/start")
 async def start_match(req: StartMatchRequest):
-    """Create a new debate match."""
-    match_id = str(uuid.uuid4())[:12]
+    """Create a new debate match or restart existing room with new topic."""
+    match_id = req.match_id.strip() if req.match_id and req.match_id.strip() else str(uuid.uuid4())[:12]
     state = await memory.create_match(
         match_id=match_id,
         p1_name=req.p1_name.strip(),
@@ -149,7 +149,22 @@ async def start_match(req: StartMatchRequest):
         topic=req.topic.strip(),
         max_rounds=req.max_rounds
     )
-    logger.info(f"[API] Match created: {match_id} | {req.p1_name} vs {req.p2_name} | Topic: {req.topic}")
+    logger.info(f"[API] Match started: {match_id} | {req.p1_name} vs {req.p2_name} | Topic: {req.topic}")
+
+    match_payload = {
+        "type": "match_restarted",
+        "match_id": match_id,
+        "topic": req.topic,
+        "max_rounds": req.max_rounds,
+        "p1": {"name": req.p1_name, "side": "FOR"},
+        "p2": {"name": req.p2_name, "side": "AGAINST"},
+        "current_player": "p1",
+        "current_round": 1
+    }
+
+    # Notify any currently connected devices in this room (e.g. Laptop 2, projector)
+    await manager.broadcast(match_id, match_payload)
+
     return {
         "match_id": match_id,
         "topic": req.topic,
@@ -161,6 +176,15 @@ async def start_match(req: StartMatchRequest):
     }
 
 
+@app.get("/api/match/latest")
+async def get_latest_match():
+    """Get current active match for easy joining across devices."""
+    state = memory.get_latest_active_match()
+    if not state:
+        raise HTTPException(status_code=404, detail="No active match found")
+    return _serialize_state(state)
+
+
 @app.get("/api/match/{match_id}")
 async def get_match(match_id: str):
     """Get current match state."""
@@ -168,6 +192,7 @@ async def get_match(match_id: str):
     if not state:
         raise HTTPException(status_code=404, detail="Match not found")
     return _serialize_state(state)
+
 
 
 @app.post("/api/match/submit")
@@ -210,6 +235,13 @@ async def submit_turn(req: SubmitTurnRequest):
     # ── Pipeline B: Claim Segmentation ──
     raw_claims = segment_response(text, max_claims=8)
     player = state.players[req.player_id]
+
+    # Notify all connected devices that an argument was submitted and analysis is running
+    await manager.broadcast(req.match_id, {
+        "type": "turn_evaluating",
+        "player_id": req.player_id,
+        "player_name": player.name
+    })
 
     # ── Pipeline A: Semantic Embeddings ──
     from pipeline_a_embedding import encode, encode_single
@@ -412,6 +444,7 @@ async def submit_turn(req: SubmitTurnRequest):
         "turn_id": req.turn_id,
         "player_id": req.player_id,
         "player_name": player.name,
+        "text": text,
         "round_number": state.current_round if not debate_over else state.max_rounds,
         "score": {
             "topic_relevance": round(turn_score.topic_relevance_raw * 100, 1),
@@ -511,12 +544,25 @@ async def reset_match(match_id: str):
     return {"status": "reset", "match_id": match_id}
 
 
+def get_local_ip():
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "10.137.243.227"
+
+
 @app.get("/api/health")
 async def health():
     """Health check endpoint for exhibition monitoring (PDF Section 24)."""
     return {
         "status": "ok",
         "active_matches": memory.get_active_match_count(),
+        "lan_ip": get_local_ip(),
         "timestamp": time.time()
     }
 
@@ -548,6 +594,8 @@ async def websocket_endpoint(websocket: WebSocket, match_id: str):
 # ─── Helper ──────────────────────────────────────────────────────────────────
 
 def _serialize_state(state: MatchState) -> dict:
+    p1 = state.players.get("p1")
+    p2 = state.players.get("p2")
     return {
         "match_id": state.match_id,
         "topic": state.topic,
@@ -555,6 +603,16 @@ def _serialize_state(state: MatchState) -> dict:
         "current_round": state.current_round,
         "max_rounds": state.max_rounds,
         "current_player": state.current_player_id,
+        "p1": {
+            "name": p1.name if p1 else "Player 1",
+            "side": "FOR",
+            "total_score": round(p1.total_score, 1) if p1 else 0.0
+        },
+        "p2": {
+            "name": p2.name if p2 else "Player 2",
+            "side": "AGAINST",
+            "total_score": round(p2.total_score, 1) if p2 else 0.0
+        },
         "players": {
             pid: {
                 "name": p.name,
@@ -564,6 +622,7 @@ def _serialize_state(state: MatchState) -> dict:
             for pid, p in state.players.items()
         },
         "turn_count": len(state.turn_log),
+        "turn_log": state.turn_log,
         "winner": state.winner
     }
 

@@ -156,3 +156,12 @@ async def expire_inactive_matches() -> None:
 
 def get_active_match_count() -> int:
     return len(_matches)
+
+
+def get_latest_active_match() -> Optional[MatchState]:
+    """Return the most recently created or active match."""
+    active = [m for m in _matches.values() if m.phase == MatchPhase.ACTIVE]
+    if not active:
+        return None
+    return max(active, key=lambda m: m.last_activity)
+

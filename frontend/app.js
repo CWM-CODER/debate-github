@@ -14,13 +14,20 @@
 'use strict';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const API_BASE = 'http://localhost:8000';
-const WS_BASE = 'ws://localhost:8000';
+// Dynamic host detection: supports localhost, local Wi-Fi IP (192.168.x.x), and Tunnels
+const HOST = window.location.hostname || 'localhost';
+const BACKEND_PORT = window.location.port === '8080' ? '8000' : (window.location.port || '8000');
+const PROTOCOL = window.location.protocol === 'file:' ? 'http:' : window.location.protocol;
+const WS_PROTOCOL = PROTOCOL === 'https:' ? 'wss:' : 'ws:';
+const API_BASE = `${PROTOCOL}//${HOST}:${BACKEND_PORT}`;
+const WS_BASE = `${WS_PROTOCOL}//${HOST}:${BACKEND_PORT}`;
 const TURN_TIME = 120;  // seconds per turn (configurable, PDF Section 13)
 const MAX_WORDS = 500;
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let matchId = null;
+let reusedMatchId = null;
+let myRole = 'both';      // 'both' (single laptop), 'p1', 'p2', or 'spectator'
 let currentPlayer = 'p1';
 let matchConfig = null;   // {p1_name, p2_name, topic, max_rounds}
 let ws = null;
@@ -161,6 +168,31 @@ function handleServerMessage(data) {
       handleEvidenceUpdate(data);
       break;
 
+    case 'turn_evaluating':
+      // Broadcast from backend when an argument is being evaluated
+      if (!isSubmitting) {
+        showAnalyzingOverlay();
+        const pName = data.player_name || (data.player_id === 'p1' ? 'Player 1' : 'Player 2');
+        const overlayText = $('analyzing-tagline');
+        if (overlayText) overlayText.textContent = `Analyzing ${pName}'s argument through AI pipelines...`;
+      }
+      break;
+
+    case 'match_restarted':
+      toast(`🔄 New debate starting: "${data.topic}"`, 'info', 5000);
+      matchId = data.match_id;
+      matchConfig = {
+        p1Name: data.p1.name,
+        p2Name: data.p2.name,
+        topic: data.topic,
+        maxRounds: data.max_rounds
+      };
+      currentPlayer = 'p1';
+      initDebateUI(data);
+      showScreen('debate-screen');
+      startTimer();
+      break;
+
     case 'match_reset':
       toast('Match has been reset by the operator.', 'warning');
       goToSetup();
@@ -174,10 +206,16 @@ function handleServerMessage(data) {
 
 // ─── Server status ────────────────────────────────────────────────────────────
 
+let serverLanIp = '10.137.243.227';
+
 async function checkServerStatus() {
   try {
     const r = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(3000) });
     if (r.ok) {
+      const data = await r.json();
+      if (data.lan_ip) {
+        serverLanIp = data.lan_ip;
+      }
       updateServerStatus(true);
       return true;
     }
@@ -216,19 +254,28 @@ startBtn.addEventListener('click', async () => {
     return;
   }
 
+  // Get selected device mode
+  const roleRadio = document.querySelector('input[name="host-device-role"]:checked');
+  myRole = roleRadio ? roleRadio.value : 'p1';
+
   startBtn.disabled = true;
   startBtn.textContent = 'Starting...';
 
   try {
+    const payload = {
+      p1_name: p1Name,
+      p2_name: p2Name,
+      topic,
+      max_rounds: rounds
+    };
+    if (reusedMatchId) {
+      payload.match_id = reusedMatchId;
+    }
+
     const res = await fetch(`${API_BASE}/api/match/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        p1_name: p1Name,
-        p2_name: p2Name,
-        topic,
-        max_rounds: rounds
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {
@@ -238,6 +285,10 @@ startBtn.addEventListener('click', async () => {
 
     const data = await res.json();
     matchId = data.match_id;
+    reusedMatchId = null;
+    const banner = $('reusing-room-banner');
+    if (banner) banner.style.display = 'none';
+
     matchConfig = { p1Name, p2Name, topic, maxRounds: rounds };
     currentPlayer = 'p1';
 
@@ -249,7 +300,7 @@ startBtn.addEventListener('click', async () => {
     showScreen('debate-screen');
     startTimer();
 
-    toast(`Match started! ${p1Name} vs ${p2Name}`, 'success');
+    toast(`Match started! Room: ${matchId}`, 'success');
 
   } catch (err) {
     toast(`Error: ${err.message}`, 'error');
@@ -261,26 +312,67 @@ startBtn.addEventListener('click', async () => {
 });
 
 
+// ─── Multi-Device Role & Permission Helpers ────────────────────────────────────
+
+function isMyTurn() {
+  if (myRole === 'spectator') return false;
+  if (myRole === 'both') return true;
+  return myRole === currentPlayer;
+}
+
+function updateRoleDisplay() {
+  const badge = $('device-role-badge');
+  if (!badge) return;
+  const roleLabels = {
+    'both': '💻 Single Laptop',
+    'p1': '⚡ Role: Player 1 (FOR)',
+    'p2': '🛡️ Role: Player 2 (AGAINST)',
+    'spectator': '📺 Role: Spectator'
+  };
+  badge.textContent = roleLabels[myRole] || myRole;
+}
+
+
 // ─── Debate UI initialization ─────────────────────────────────────────────────
 
 function initDebateUI(data) {
+  const p1Name = data.p1 ? data.p1.name : (data.players && data.players.p1 ? data.players.p1.name : 'Player 1');
+  const p2Name = data.p2 ? data.p2.name : (data.players && data.players.p2 ? data.players.p2.name : 'Player 2');
+  const rounds = data.max_rounds || 4;
+  const curRound = data.current_round || 1;
+  const curPlayer = data.current_player || 'p1';
+  currentPlayer = curPlayer;
+
   // Header
   $('header-topic').textContent = data.topic;
-  $('p1-name-header').textContent = data.p1.name;
-  $('p2-name-header').textContent = data.p2.name;
-  $('p1-avatar-header').textContent = data.p1.name[0].toUpperCase();
-  $('p2-avatar-header').textContent = data.p2.name[0].toUpperCase();
-  $('p1-panel-name').textContent = data.p1.name;
-  $('p1-score-header').textContent = '0.0';
-  $('p2-score-header').textContent = '0.0';
-  $('p1-total-score').textContent = '0.0';
+  $('p1-name-header').textContent = p1Name;
+  $('p2-name-header').textContent = p2Name;
+  $('p1-avatar-header').textContent = p1Name ? p1Name[0].toUpperCase() : 'P1';
+  $('p2-avatar-header').textContent = p2Name ? p2Name[0].toUpperCase() : 'P2';
+  $('p1-panel-name').textContent = p1Name;
+  
+  const p1Total = data.p1 && data.p1.total_score != null ? data.p1.total_score : 0.0;
+  const p2Total = data.p2 && data.p2.total_score != null ? data.p2.total_score : 0.0;
+  $('p1-score-header').textContent = p1Total.toFixed(1);
+  $('p2-score-header').textContent = p2Total.toFixed(1);
+  $('p1-total-score').textContent = p1Total.toFixed(1);
+
+  // Room ID and Role Badges
+  const roomText = $('room-id-text');
+  if (roomText) roomText.textContent = data.match_id || matchId;
+  updateRoleDisplay();
 
   // Round dots
-  buildRoundDots(data.max_rounds, 1);
-  $('round-label').textContent = `Round 1 / ${data.max_rounds}`;
+  buildRoundDots(rounds, curRound);
+  $('round-label').textContent = `Round ${curRound} / ${rounds}`;
 
   // Turn indicator
-  updateTurnIndicator('p1', data.p1.name, 'Opening argument — FOR the proposition');
+  const curName = curPlayer === 'p1' ? p1Name : p2Name;
+  const side = curPlayer === 'p1' ? 'FOR' : 'AGAINST';
+  const instruction = curRound === 1
+    ? `Opening argument — ${side} the proposition`
+    : `Round ${curRound} rebuttal — respond to opponent's arguments`;
+  updateTurnIndicator(curPlayer, curName, instruction);
 
   // Clear feed
   debateFeed.innerHTML = '';
@@ -298,7 +390,7 @@ function initDebateUI(data) {
   $('relations-section').style.display = 'none';
   $('factcheck-section').style.display = 'none';
 
-  // Enable input
+  // Enable/disable input according to device role
   enableInput();
   turnCounter = 0;
 }
@@ -319,8 +411,18 @@ function buildRoundDots(maxRounds, currentRound) {
 function updateTurnIndicator(playerId, playerName, instruction) {
   const avatar = $('current-avatar');
   avatar.className = `turn-avatar ${playerId}`;
-  avatar.textContent = playerName[0].toUpperCase();
-  $('current-player-name').textContent = playerName + "'s Turn";
+  avatar.textContent = playerName ? playerName[0].toUpperCase() : 'P';
+  
+  if (myRole === 'spectator') {
+    $('current-player-name').textContent = `${playerName}'s Turn (${playerId === 'p1' ? 'FOR' : 'AGAINST'})`;
+  } else if (myRole === 'both') {
+    $('current-player-name').textContent = `${playerName}'s Turn`;
+  } else if (myRole === playerId) {
+    $('current-player-name').textContent = `👉 YOUR TURN (${playerName})`;
+  } else {
+    $('current-player-name').textContent = `⏳ ${playerName}'s Turn (Opponent)`;
+  }
+
   $('turn-instruction').textContent = instruction;
 }
 
@@ -328,7 +430,7 @@ function updateTurnIndicator(playerId, playerName, instruction) {
 // ─── Argument submission ──────────────────────────────────────────────────────
 
 submitBtn.addEventListener('click', async () => {
-  if (isSubmitting) return;  // idempotency guard (PDF 15.3)
+  if (isSubmitting || !isMyTurn()) return;  // idempotency and role guard
 
   const text = textarea.value.trim();
   if (!text) {
@@ -416,6 +518,8 @@ function handleTurnResult(data) {
   }
 
   if (data.debate_over) {
+    stopTimer();
+    disableInput();
     setTimeout(() => showFinalScreen(data), 1800);
     return;
   }
@@ -498,10 +602,37 @@ function addDebateBubble(playerId, playerName, data) {
     `<span class="claim-chip ${c.type}" title="${c.text.slice(0, 60)}...">${c.type}</span>`
   ).join('');
 
-  // Relation brief
-  const relSummary = data.relations && data.relations.length > 0
-    ? `<span style="font-size:11px; color:var(--text-muted);">Relations: ${data.relations.map(r => r.relation).join(', ')}</span>`
-    : '';
+  // Relation brief — summarize NLI logical relations cleanly
+  let relSummary = '';
+  if (data.relations && data.relations.length > 0) {
+    const counts = {};
+    data.relations.forEach(r => {
+      const rel = (r.relation || '').toLowerCase();
+      counts[rel] = (counts[rel] || 0) + 1;
+    });
+
+    const badges = [];
+    if (counts['contradict']) {
+      badges.push(`<span style="color:#f43f5e; font-weight:600;" title="Direct clash / counter-argument">⚔️ ${counts['contradict']} Rebuttal${counts['contradict'] > 1 ? 's' : ''}</span>`);
+    }
+    if (counts['qualify']) {
+      badges.push(`<span style="color:#f59e0b; font-weight:600;" title="Nuanced / partial counter">⚖️ ${counts['qualify']} Nuance</span>`);
+    }
+    if (counts['support'] || counts['agree']) {
+      const c = (counts['support'] || 0) + (counts['agree'] || 0);
+      badges.push(`<span style="color:#10b981; font-weight:600;" title="Concession or agreement">🤝 ${c} Concession</span>`);
+    }
+    if (counts['elaborate']) {
+      badges.push(`<span style="color:#06b6d4; font-weight:600;" title="Deepens evidence on point">💡 ${counts['elaborate']} Elaboration</span>`);
+    }
+    if (counts['unrelated']) {
+      badges.push(`<span style="color:var(--text-muted);" title="Independent point / fresh subtopic">📝 ${counts['unrelated']} Fresh Point${counts['unrelated'] > 1 ? 's' : ''}</span>`);
+    }
+
+    relSummary = `<div style="display:inline-flex; align-items:center; gap:6px; font-size:11px; margin-left:auto; flex-wrap:wrap;">${badges.join('<span style="opacity:0.3">·</span>')}</div>`;
+  }
+
+  const argumentContent = data.text || data.turn_log_text || textarea.value || '';
 
   bubble.innerHTML = `
     <div class="bubble-header">
@@ -510,7 +641,7 @@ function addDebateBubble(playerId, playerName, data) {
       <span>${playerId === 'p1' ? '🟦 FOR' : '🟥 AGAINST'}</span>
       <span style="opacity:0.5; margin-left:auto">Round ${data.round_number}</span>
     </div>
-    <div class="bubble-text">${escapeHtml(textarea.value || data.text || '').replace(/\n/g, '<br/>')}</div>
+    <div class="bubble-text">${escapeHtml(argumentContent).replace(/\n/g, '<br/>')}</div>
     ${claimChipsHtml ? `<div class="claim-chips" style="margin-top:8px">${claimChipsHtml}</div>` : ''}
     <div class="bubble-score">
       <span class="bubble-score-num">${score.weighted_total.toFixed(1)}</span>
@@ -519,10 +650,6 @@ function addDebateBubble(playerId, playerName, data) {
       ${relSummary}
     </div>
   `;
-
-  // Store the text before clearing
-  bubble.querySelector('.bubble-text').textContent =
-    data.turn_log_text || textarea.value || '';
 
   debateFeed.appendChild(bubble);
   debateFeed.scrollTop = debateFeed.scrollHeight;
@@ -741,6 +868,10 @@ function showFinalScreen(data) {
     }
   }
 
+  stopTimer();
+  const reuseLabel = $('reuse-room-code-label');
+  if (reuseLabel) reuseLabel.textContent = matchId || '------';
+
   showScreen('final-screen');
   launchConfetti(winner);
   toast(`🏆 ${winnerName} wins the debate!`, 'success', 6000);
@@ -750,15 +881,26 @@ function showFinalScreen(data) {
 // ─── Timer ────────────────────────────────────────────────────────────────────
 
 function startTimer() {
+  stopTimer();
   timerSeconds = TURN_TIME;
   updateTimerDisplay();
 
   timerInterval = setInterval(() => {
+    // Guard: only tick down when debate screen is actively shown
+    if (!debateScreen || !debateScreen.classList.contains('active')) {
+      stopTimer();
+      return;
+    }
+
     timerSeconds--;
     updateTimerDisplay();
+
     if (timerSeconds <= 0) {
       stopTimer();
-      toast('⏱ Time is up! Please submit your argument.', 'warning');
+      // Only warn the debater whose turn it is on the active debate screen
+      if (isMyTurn() && debateScreen.classList.contains('active')) {
+        toast('⏱ Time is up! Please submit your argument.', 'warning');
+      }
     }
   }, 1000);
 }
@@ -803,10 +945,35 @@ function updateTimerDisplay() {
 
 function enableInput() {
   const area = $('input-area');
+  const waitingBanner = $('turn-waiting-banner');
+  const waitingText = $('turn-waiting-text');
+
+  if (!isMyTurn()) {
+    // Other player's turn or spectator
+    area.classList.add('disabled');
+    textarea.disabled = true;
+    submitBtn.disabled = true;
+    if (voiceBtn) voiceBtn.disabled = true;
+
+    if (waitingBanner) {
+      waitingBanner.style.display = 'flex';
+      if (myRole === 'spectator') {
+        waitingText.textContent = '👀 Spectator Mode · Live Debate in Progress';
+      } else {
+        const curName = matchConfig ? (currentPlayer === 'p1' ? matchConfig.p1Name : matchConfig.p2Name) : 'opponent';
+        waitingText.textContent = `⏳ Waiting for ${curName} to submit argument from their laptop...`;
+      }
+    }
+    return;
+  }
+
+  // It IS this device's turn
+  if (waitingBanner) waitingBanner.style.display = 'none';
   area.classList.remove('disabled');
   textarea.disabled = false;
+  if (voiceBtn) voiceBtn.disabled = false;
   textarea.focus();
-  submitBtn.disabled = false;
+  updateWordCount();
 }
 
 function disableInput() {
@@ -814,6 +981,7 @@ function disableInput() {
   area.classList.add('disabled');
   textarea.disabled = true;
   submitBtn.disabled = true;
+  if (voiceBtn) voiceBtn.disabled = true;
 }
 
 textarea.addEventListener('input', updateWordCount);
@@ -1022,13 +1190,50 @@ resetBtn.addEventListener('click', async () => {
 });
 
 newMatchBtn.addEventListener('click', () => {
-  goToSetup();
+  goToSetup(false);
 });
 
-function goToSetup() {
+const reuseRoomBtn = $('reuse-room-btn');
+if (reuseRoomBtn) {
+  reuseRoomBtn.addEventListener('click', () => {
+    goToSetup(true);
+  });
+}
+
+const cancelReuseBtn = $('cancel-room-reuse-btn');
+if (cancelReuseBtn) {
+  cancelReuseBtn.addEventListener('click', () => {
+    reusedMatchId = null;
+    const banner = $('reusing-room-banner');
+    if (banner) banner.style.display = 'none';
+    toast('Switched to fresh room mode.', 'info');
+  });
+}
+
+function goToSetup(keepRoom = false) {
   stopTimer();
-  matchId = null;
-  matchConfig = null;
+
+  if (keepRoom && matchId) {
+    reusedMatchId = matchId;
+    const banner = $('reusing-room-banner');
+    if (banner) {
+      banner.style.display = 'flex';
+      $('reused-room-code-tag').textContent = reusedMatchId;
+    }
+    const topicInput = $('topic-input');
+    if (topicInput) {
+      topicInput.value = '';
+      setTimeout(() => topicInput.focus(), 250);
+    }
+    toast(`Configuring next debate for Room: ${reusedMatchId}`, 'info');
+  } else {
+    reusedMatchId = null;
+    const banner = $('reusing-room-banner');
+    if (banner) banner.style.display = 'none';
+    matchId = null;
+    matchConfig = null;
+  }
+
   currentPlayer = 'p1';
   isSubmitting = false;
   voiceTranscript = '';
@@ -1129,14 +1334,210 @@ function escapeHtml(str) {
 }
 
 
+// ─── Multi-Device Match Joining & Room Sharing ───────────────────────────────
+
+async function joinMatch(targetMatchId, role) {
+  try {
+    toast(`Connecting to room ${targetMatchId}...`, 'info');
+    const res = await fetch(`${API_BASE}/api/match/${targetMatchId}`);
+    if (!res.ok) {
+      throw new Error('Match room not found or expired.');
+    }
+    const data = await res.json();
+    matchId = data.match_id;
+    myRole = role || 'p2';
+
+    const p1Name = data.p1 ? data.p1.name : (data.players && data.players.p1 ? data.players.p1.name : 'Player 1');
+    const p2Name = data.p2 ? data.p2.name : (data.players && data.players.p2 ? data.players.p2.name : 'Player 2');
+    matchConfig = {
+      p1Name,
+      p2Name,
+      topic: data.topic,
+      maxRounds: data.max_rounds
+    };
+    currentPlayer = data.current_player || 'p1';
+
+    // Connect WebSocket
+    connectWebSocket(matchId);
+
+    // Initialize UI
+    initDebateUI(data);
+
+    // If there is existing turn history, replay into feed
+    if (data.turn_log && data.turn_log.length > 0) {
+      feedEmpty.style.display = 'none';
+      data.turn_log.forEach(turn => {
+        addDebateBubble(turn.player_id, turn.player_name, {
+          text: turn.text,
+          round_number: turn.round,
+          score: { weighted_total: Math.round((turn.score || 0) * 100) },
+          claims: []
+        });
+      });
+      if (data.p1 && data.p1.total_score != null) {
+        $('p1-total-score').textContent = data.p1.total_score.toFixed(1);
+        $('p1-score-header').textContent = data.p1.total_score.toFixed(1);
+      }
+      if (data.p2 && data.p2.total_score != null) {
+        $('p2-total-score').textContent = data.p2.total_score.toFixed(1);
+        $('p2-score-header').textContent = data.p2.total_score.toFixed(1);
+      }
+    }
+
+    showScreen('debate-screen');
+    startTimer();
+
+    const roleName = myRole === 'spectator' ? 'Spectator (Projector)' : (myRole === 'p2' ? 'Player 2 (AGAINST)' : 'Player 1 (FOR)');
+    toast(`Joined room ${matchId} as ${roleName}!`, 'success');
+
+  } catch (err) {
+    toast(`Could not join room: ${err.message}`, 'error');
+    console.error(err);
+  }
+}
+
+async function checkForActiveMatch() {
+  try {
+    const res = await fetch(`${API_BASE}/api/match/latest`);
+    if (res.ok) {
+      const match = await res.json();
+      const card = $('active-match-card');
+      if (card && match && match.match_id) {
+        card.style.display = 'block';
+        $('active-match-topic').textContent = match.topic;
+        const p1n = match.p1 ? match.p1.name : 'Player 1';
+        const p2n = match.p2 ? match.p2.name : 'Player 2';
+        $('active-match-players').textContent = `${p1n} (FOR) vs ${p2n} (AGAINST) · Round ${match.current_round}/${match.max_rounds} · Room: ${match.match_id}`;
+        
+        const qP2 = $('quick-join-p2-btn');
+        if (qP2) qP2.onclick = () => joinMatch(match.match_id, 'p2');
+        const qSpec = $('quick-join-spectator-btn');
+        if (qSpec) qSpec.onclick = () => joinMatch(match.match_id, 'spectator');
+        const qP1 = $('quick-join-p1-btn');
+        if (qP1) qP1.onclick = () => joinMatch(match.match_id, 'p1');
+      }
+    } else {
+      const card = $('active-match-card');
+      if (card) card.style.display = 'none';
+    }
+  } catch (_) {
+    // Backend offline or no active match
+  }
+}
+
+function initMultiDeviceControls() {
+  // Setup tabs
+  const tabHostBtn = $('tab-host-btn');
+  const tabJoinBtn = $('tab-join-btn');
+  const hostPanel = $('host-tab-panel');
+  const joinPanel = $('join-tab-panel');
+
+  if (tabHostBtn && tabJoinBtn) {
+    tabHostBtn.addEventListener('click', () => {
+      tabHostBtn.classList.add('active');
+      tabJoinBtn.classList.remove('active');
+      if (hostPanel) hostPanel.style.display = '';
+      if (joinPanel) joinPanel.style.display = 'none';
+    });
+
+    tabJoinBtn.addEventListener('click', () => {
+      tabJoinBtn.classList.add('active');
+      tabHostBtn.classList.remove('active');
+      if (hostPanel) hostPanel.style.display = 'none';
+      if (joinPanel) joinPanel.style.display = '';
+      checkForActiveMatch();
+    });
+  }
+
+  // Manual join button
+  const manualJoinBtn = $('manual-join-btn');
+  if (manualJoinBtn) {
+    manualJoinBtn.addEventListener('click', () => {
+      const mId = $('join-match-id').value.trim();
+      const role = $('join-role-select').value;
+      if (!mId) {
+        toast('Please enter a Debate Room ID.', 'error');
+        return;
+      }
+      joinMatch(mId, role);
+    });
+  }
+
+  // Helper to generate a link that works on other laptops even if host opened localhost
+  function buildShareLink(role) {
+    if (!matchId) return '';
+    const currentHost = window.location.hostname;
+    let targetHost = currentHost;
+    if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
+      targetHost = serverLanIp || '10.137.243.227';
+    }
+    const portPart = window.location.port ? `:${window.location.port}` : '';
+    return `${window.location.protocol}//${targetHost}${portPart}${window.location.pathname}?match=${matchId}&role=${role}`;
+  }
+
+  // Share invite link buttons
+  const shareP2Btn = $('share-p2-btn');
+  if (shareP2Btn) {
+    shareP2Btn.addEventListener('click', () => {
+      if (!matchId) return;
+      const url = buildShareLink('p2');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+          toast(`📋 Player 2 link copied (${url})! Send to Laptop 2.`, 'success', 6000);
+        }).catch(() => {
+          prompt('Copy Player 2 link:', url);
+        });
+      } else {
+        prompt('Copy Player 2 link:', url);
+      }
+    });
+  }
+
+  const shareSpecBtn = $('share-spectator-btn');
+  if (shareSpecBtn) {
+    shareSpecBtn.addEventListener('click', () => {
+      if (!matchId) return;
+      const url = buildShareLink('spectator');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+          toast(`📺 Projector link copied (${url})! Open on audience screen.`, 'success', 6000);
+        }).catch(() => {
+          prompt('Copy Projector link:', url);
+        });
+      } else {
+        prompt('Copy Projector link:', url);
+      }
+    });
+  }
+}
+
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   initVoiceRecognition();
+  initMultiDeviceControls();
   checkServerStatus();
 
   // Periodic health check (exhibition reliability — PDF Section 24)
   setInterval(checkServerStatus, 30000);
+
+  // Check URL query parameters for auto-joining: ?match=<id>&role=<p1|p2|spectator>
+  const urlParams = new URLSearchParams(window.location.search);
+  const queryMatchId = urlParams.get('match');
+  const queryRole = urlParams.get('role');
+
+  if (queryMatchId) {
+    joinMatch(queryMatchId, queryRole || 'p2');
+  } else {
+    checkForActiveMatch();
+    // Refresh active matches every 6 seconds on setup screen
+    setInterval(() => {
+      if ($('setup-screen').classList.contains('active')) {
+        checkForActiveMatch();
+      }
+    }, 6000);
+  }
 
   // Enter key to submit
   textarea.addEventListener('keydown', e => {
@@ -1149,7 +1550,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Window resize for confetti canvas
   window.addEventListener('resize', () => {
     const canvas = $('confetti-canvas');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    if (canvas) {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
   });
 });

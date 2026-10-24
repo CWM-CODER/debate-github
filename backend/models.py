@@ -194,6 +194,8 @@ class StartMatchRequest(BaseModel):
     p2_name: str
     topic: str
     max_rounds: int = 4  # configurable per PDF Section 13
+    match_id: Optional[str] = None  # optional to reuse existing room code across debates
+
 
 
 class SubmitTurnRequest(BaseModel):

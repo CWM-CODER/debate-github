@@ -58,83 +58,176 @@
 
       <!-- Setup card -->
       <div class="setup-card" role="form" aria-label="Match setup form">
-        <h2>⚔️ Configure Match</h2>
-
-        <!-- Player names -->
-        <div class="setup-grid">
-          <div class="field-group p1-field">
-            <label for="p1-name">
-              Player 1 <span class="player-badge p1-badge">FOR</span>
-            </label>
-            <input
-              id="p1-name"
-              class="input-field"
-              type="text"
-              placeholder="Enter name..."
-              maxlength="40"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field-group p2-field">
-            <label for="p2-name">
-              Player 2 <span class="player-badge p2-badge">AGAINST</span>
-            </label>
-            <input
-              id="p2-name"
-              class="input-field"
-              type="text"
-              placeholder="Enter name..."
-              maxlength="40"
-              autocomplete="off"
-            />
-          </div>
-
-          <!-- Topic -->
-          <div class="field-group topic-field">
-            <label for="topic-input">Debate Topic / Proposition</label>
-            <textarea
-              id="topic-input"
-              class="input-field"
-              placeholder="e.g. Artificial Intelligence will do more good than harm to society."
-              rows="2"
-              maxlength="300"
-            ></textarea>
-          </div>
+        
+        <!-- Setup Tabs: Host vs Join -->
+        <div class="setup-tabs">
+          <button id="tab-host-btn" class="setup-tab active" type="button">
+            ⚔️ Host Debate (Host)
+          </button>
+          <button id="tab-join-btn" class="setup-tab" type="button">
+            🔗 Join Debate (2nd Laptop / Spectator)
+          </button>
         </div>
 
-        <!-- Side assignment display -->
-        <div class="side-display">
-          <div class="side-card for-side">
-            <span class="side-icon">✅</span>
-            <div>
-              <div style="font-size:10px; opacity:0.7; text-transform:uppercase; letter-spacing:0.1em">Player 1</div>
-              <div>Arguing <strong>FOR</strong> the proposition</div>
+        <!-- TAB 1: HOST DEBATE -->
+        <div id="host-tab-panel">
+          <h2>⚔️ Configure Match</h2>
+
+          <!-- Reusing room code banner -->
+          <div id="reusing-room-banner" style="display:none; background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); border-radius:var(--radius-xs); padding:10px 14px; margin-bottom:16px; font-size:12px; color:var(--accent-cyan); display:flex; justify-content:space-between; align-items:center;">
+            <span>🔄 <strong>Reusing Room:</strong> <code id="reused-room-code-tag" style="background:rgba(0,0,0,0.3); padding:2px 6px; border-radius:3px;">------</code> (Laptop 2 will auto-join)</span>
+            <button id="cancel-room-reuse-btn" class="btn btn-xs" type="button" style="background:rgba(255,255,255,0.08); color:var(--text-secondary); border:1px solid var(--border);">
+              Use Fresh Room
+            </button>
+          </div>
+
+          <!-- Player names -->
+          <div class="setup-grid">
+            <div class="field-group p1-field">
+              <label for="p1-name">
+                Player 1 <span class="player-badge p1-badge">FOR</span>
+              </label>
+              <input
+                id="p1-name"
+                class="input-field"
+                type="text"
+                placeholder="Enter name..."
+                maxlength="40"
+                autocomplete="off"
+              />
+            </div>
+            <div class="field-group p2-field">
+              <label for="p2-name">
+                Player 2 <span class="player-badge p2-badge">AGAINST</span>
+              </label>
+              <input
+                id="p2-name"
+                class="input-field"
+                type="text"
+                placeholder="Enter name..."
+                maxlength="40"
+                autocomplete="off"
+              />
+            </div>
+
+            <!-- Topic -->
+            <div class="field-group topic-field">
+              <label for="topic-input">Debate Topic / Proposition</label>
+              <textarea
+                id="topic-input"
+                class="input-field"
+                placeholder="e.g. Artificial Intelligence will do more good than harm to society."
+                rows="2"
+                maxlength="300"
+              ></textarea>
             </div>
           </div>
-          <div class="side-card against-side">
-            <span class="side-icon">🚫</span>
-            <div>
-              <div style="font-size:10px; opacity:0.7; text-transform:uppercase; letter-spacing:0.1em">Player 2</div>
-              <div>Arguing <strong>AGAINST</strong> the proposition</div>
+
+          <!-- Side assignment display -->
+          <div class="side-display">
+            <div class="side-card for-side">
+              <span class="side-icon">✅</span>
+              <div>
+                <div style="font-size:10px; opacity:0.7; text-transform:uppercase; letter-spacing:0.1em">Player 1</div>
+                <div>Arguing <strong>FOR</strong> the proposition</div>
+              </div>
             </div>
+            <div class="side-card against-side">
+              <span class="side-icon">🚫</span>
+              <div>
+                <div style="font-size:10px; opacity:0.7; text-transform:uppercase; letter-spacing:0.1em">Player 2</div>
+                <div>Arguing <strong>AGAINST</strong> the proposition</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rounds selector -->
+          <div class="rounds-row">
+            <label for="max-rounds">Number of Rounds:</label>
+            <select id="max-rounds" class="rounds-select">
+              <option value="2">2 rounds (Quick)</option>
+              <option value="4" selected>4 rounds (Standard)</option>
+              <option value="6">6 rounds (Extended)</option>
+            </select>
+            <span style="font-size:12px; color:var(--text-muted); margin-left:4px">per player</span>
+          </div>
+
+          <!-- Host Device Role -->
+          <div class="role-selector-row">
+            <label>This Device Mode:</label>
+            <div class="role-options">
+              <label class="role-radio-label">
+                <input type="radio" name="host-device-role" value="p1" checked />
+                <span>⚡ Player 1 Laptop (Player 2 joins on separate laptop)</span>
+              </label>
+              <label class="role-radio-label">
+                <input type="radio" name="host-device-role" value="both" />
+                <span>💻 Single Laptop (Both players share this laptop)</span>
+              </label>
+            </div>
+          </div>
+
+          <button id="start-match-btn" class="btn btn-primary" aria-label="Start the debate match">
+            <span class="btn-icon">⚡</span>
+            Start Debate
+          </button>
+        </div>
+
+        <!-- TAB 2: JOIN DEBATE (FOR 2ND LAPTOP / SPECTATOR) -->
+        <div id="join-tab-panel" style="display:none;">
+          <h2>🔗 Join Ongoing Debate</h2>
+          <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+            Join a debate hosted on another laptop over the same Wi-Fi/Hotspot or Tunnel.
+          </p>
+          <div style="font-size:12px; color:var(--accent-amber); margin-bottom:14px; background:rgba(245,158,11,0.08); padding:8px 12px; border-radius:var(--radius-xs); border:1px solid rgba(245,158,11,0.2);">
+            💡 <strong>Laptop 2 Note:</strong> Make sure you opened this browser using Laptop 1's Wi-Fi address (e.g. <code>http://10.137.243.227:8000</code>), not <code>localhost</code>.
+          </div>
+
+          <!-- Auto-detected active match card -->
+          <div id="active-match-card" class="active-match-card" style="display:none;">
+            <div class="active-match-badge">🔥 LIVE MATCH DETECTED</div>
+            <div id="active-match-topic" class="active-match-topic">Loading...</div>
+            <div id="active-match-players" class="active-match-players"></div>
+            <div class="active-match-actions">
+              <button id="quick-join-p2-btn" class="btn btn-sm btn-p2" type="button">
+                👉 Join as Player 2 (AGAINST)
+              </button>
+              <button id="quick-join-spectator-btn" class="btn btn-sm btn-secondary" type="button">
+                📺 Join as Spectator (Projector)
+              </button>
+              <button id="quick-join-p1-btn" class="btn btn-sm btn-p1" type="button">
+                Join as Player 1 (FOR)
+              </button>
+            </div>
+          </div>
+
+          <!-- Manual join input -->
+          <div style="background:rgba(255,255,255,0.02); padding:16px; border-radius:var(--radius-sm); border:1px solid var(--border);">
+            <div class="field-group" style="margin-bottom:12px;">
+              <label for="join-match-id">Debate Room ID:</label>
+              <input
+                id="join-match-id"
+                class="input-field"
+                type="text"
+                placeholder="e.g. 7b3a4f8910cd"
+                autocomplete="off"
+              />
+            </div>
+            <div class="field-group" style="margin-bottom:16px;">
+              <label for="join-role-select">Select Your Role on this Laptop:</label>
+              <select id="join-role-select" class="rounds-select" style="width:100%; height:40px;">
+                <option value="p2" selected>Player 2 (AGAINST the proposition)</option>
+                <option value="p1">Player 1 (FOR the proposition)</option>
+                <option value="spectator">Spectator / Projector / Audience</option>
+                <option value="both">Both Players (Single Screen)</option>
+              </select>
+            </div>
+            <button id="manual-join-btn" class="btn btn-primary" type="button" style="width:100%;">
+              🚀 Join Debate Room
+            </button>
           </div>
         </div>
 
-        <!-- Rounds selector -->
-        <div class="rounds-row">
-          <label for="max-rounds">Number of Rounds:</label>
-          <select id="max-rounds" class="rounds-select">
-            <option value="2">2 rounds (Quick)</option>
-            <option value="4" selected>4 rounds (Standard)</option>
-            <option value="6">6 rounds (Extended)</option>
-          </select>
-          <span style="font-size:12px; color:var(--text-muted); margin-left:4px">per player</span>
-        </div>
-
-        <button id="start-match-btn" class="btn btn-primary" aria-label="Start the debate match">
-          <span class="btn-icon">⚡</span>
-          Start Debate
-        </button>
       </div>
     </div>
   </section>
@@ -177,10 +270,22 @@
         <div class="turn-avatar p2" id="p2-avatar-header" aria-hidden="true">P2</div>
       </div>
 
-      <!-- Operator controls -->
-      <button id="reset-btn" class="btn btn-reset" aria-label="Reset match" title="Operator: Reset match">
-        ↺ Reset
-      </button>
+      <!-- Operator controls & Room sharing -->
+      <div class="room-share-bar">
+        <span class="room-code-tag" id="room-code-badge" title="Debate Room ID">
+          Room: <strong id="room-id-text">------</strong>
+        </span>
+        <span class="device-role-tag" id="device-role-badge">Role: Player 1</span>
+        <button id="share-p2-btn" class="btn btn-xs btn-share" type="button" title="Copy join link for Player 2 laptop">
+          📋 P2 Invite Link
+        </button>
+        <button id="share-spectator-btn" class="btn btn-xs btn-share" type="button" title="Copy link for projector / audience">
+          📺 Projector Link
+        </button>
+        <button id="reset-btn" class="btn btn-reset" aria-label="Reset match" title="Operator: Reset match">
+          ↺ Reset
+        </button>
+      </div>
     </header>
 
     <!-- Main debate layout -->
@@ -292,6 +397,14 @@
 
         <!-- Argument input area -->
         <div class="input-area" id="input-area" aria-label="Submit argument">
+
+          <!-- Turn waiting banner (shows when waiting for other device or in spectator mode) -->
+          <div id="turn-waiting-banner" class="turn-waiting-banner" style="display:none;">
+            <div class="waiting-pulse-dot"></div>
+            <div id="turn-waiting-text" class="turn-waiting-text">
+              Waiting for opponent's turn...
+            </div>
+          </div>
 
           <!-- Voice transcript preview (shows before confirmation) -->
           <div class="voice-transcript-preview" id="voice-preview">
@@ -518,9 +631,12 @@
       </div>
 
       <!-- Actions -->
-      <div class="final-actions">
-        <button id="new-match-btn" class="btn btn-new-match" aria-label="Start a new debate match">
-          ⚡ New Match
+      <div class="final-actions" style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+        <button id="reuse-room-btn" class="btn btn-primary" type="button" style="background:linear-gradient(135deg, #3b82f6, #8b5cf6);" aria-label="Start next debate keeping this room code">
+          🔄 Next Debate (Keep Room: <span id="reuse-room-code-label">------</span>)
+        </button>
+        <button id="new-match-btn" class="btn btn-new-match" aria-label="Start fresh match in new room">
+          ➕ Fresh Room
         </button>
       </div>
     </div>
